@@ -1660,7 +1660,7 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
                     // Multiple GUIDs, get them all
                     int count = (size/MAX_GUID_STRING_LENGTH) + 1;
                     DWORD byte_size = count * MAX_GUID_STRING_LENGTH * sizeof(char);
-                    LPBYTE  guids_buffer = calloc(count, MAX_GUID_STRING_LENGTH * sizeof(char));
+                    LPBYTE  guids_buffer = calloc(count, MAX_GUID_STRING_LENGTH * sizeof(BYTE));
                     guids_buffer[byte_size-1] = 0x0;
                     while(s == ERROR_MORE_DATA){
                         s = pRegQueryValueExA(key, "DeviceInterfaceGUIDs", NULL, &reg_type,
@@ -1669,7 +1669,7 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
                             s = pRegQueryValueExA(key, "DeviceInterfaceGUID", NULL, &reg_type,
                                 guids_buffer, &byte_size);
                         if(s == ERROR_MORE_DATA){
-                            // split the guids up and add them individually
+                            // Somehow the first allocation was not large enough, grow it by one GUID and try again
                             count++;
                             usbi_dbg(ctx, "Allocating buffer for %d interface GUIDS", count);
                             byte_size = count * MAX_GUID_STRING_LENGTH * sizeof(char);
@@ -1677,38 +1677,38 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
                             guids_buffer[byte_size-1] = 0x0;
                         }
                     }
-                    // Only grab the first one
+                    // For each guid in the interfaces array, if it is not already in the GUID list, add it.
                     for(int index = 0; index < count; ++index){
-                        //memcpy_s(guid_string, MAX_GUID_STRING_LENGTH, guids_buffer,MAX_GUID_STRING_LENGTH);
                         int index_offset = index * MAX_GUID_STRING_LENGTH;
                         int guid_length = sizeof(guids_buffer + index_offset);
                         if ((reg_type == REG_SZ && size >= guid_length - sizeof(char))
                         || (reg_type == REG_MULTI_SZ && size >= guid_length - 2 * sizeof(char))) {
                             int ret  = winusb_add_guid_to_guid_list(ctx, dev_id,(guids_buffer + index_offset), &nb_guids, &guid_size, &guid_list);
-                            if(ret == LIBUSB_ERROR_NO_MEM){
+                            if(ret == LIBUSB_ERROR_NO_MEM){                                
+                                pRegCloseKey(key);
                                 LOOP_BREAK(LIBUSB_ERROR_NO_MEM);
                             }
                         } else {
                             usbi_warn(ctx, "unexpected type/size of DeviceInterfaceGUID for '%s'", dev_id);
                         }
                     }
-                    free(guids_buffer);
-                    pRegCloseKey(key);
+                    free(guids_buffer);;
                 } else if (s != ERROR_SUCCESS) {
                     usbi_warn(ctx, "unexpected error from pRegQueryValueExA for '%s'", dev_id);
                 }else {
-                    pRegCloseKey(key);
                     if ((reg_type == REG_SZ && size >= sizeof(guid_string) - sizeof(char))
                     || (reg_type == REG_MULTI_SZ && size >= sizeof(guid_string) - 2 * sizeof(char))) {
                         int ret  = winusb_add_guid_to_guid_list(ctx, dev_id, (LPBYTE)guid_string, &nb_guids, &guid_size, &guid_list);
-                        if(ret == LIBUSB_ERROR_NO_MEM){
+                        if(ret == LIBUSB_ERROR_NO_MEM){                            
+                            pRegCloseKey(key);
                             LOOP_BREAK(LIBUSB_ERROR_NO_MEM);
                         }
                     }
                     else {
                         usbi_warn(ctx, "unexpected type/size of DeviceInterfaceGUID for '%s'", dev_id);
                     }
-                }
+                }                
+                pRegCloseKey(key);
 				break;
             case HID_PASS:
 				api = USB_API_HID;
