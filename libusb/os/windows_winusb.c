@@ -1453,6 +1453,9 @@ static int set_hid_interface(struct libusb_context *ctx, struct libusb_device *d
 	return LIBUSB_SUCCESS;
 }
 
+
+static long winusb_add_guid_to_guid_list(struct libusb_context *ctx, const char* dev_id, LPBYTE guid_string, unsigned int *nb_guids, unsigned int *guid_size, const GUID ***guid_list);
+
 /*
  * get_device_list: libusb backend device enumeration function
  */
@@ -1474,8 +1477,7 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
 	unsigned long session_id;
 	DWORD size, port_nr, reg_type, install_state;
 	HKEY key;
-	char guid_string[MAX_GUID_STRING_LENGTH];
-	GUID *if_guid;
+    char guid_string[MAX_GUID_STRING_LENGTH];
 	LONG s;
 #define HUB_PASS 0
 #define DEV_PASS 1
@@ -1485,7 +1487,7 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
 #define EXT_PASS 5
 	// Keep a list of guids that will be enumerated
 #define GUID_SIZE_STEP 8
-	const GUID **guid_list, **new_guid_list;
+    const GUID **guid_list;
 	unsigned int guid_size = GUID_SIZE_STEP;
 	unsigned int nb_guids;
 	// Keep a list of PnP enumerator strings that are found
@@ -1650,55 +1652,65 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
 					(LPBYTE)guid_string, &size);
 				if (s == ERROR_FILE_NOT_FOUND)
 					s = pRegQueryValueExA(key, "DeviceInterfaceGUID", NULL, &reg_type,
-						(LPBYTE)guid_string, &size);
-				pRegCloseKey(key);
+                        (LPBYTE)guid_string, &size);
 				if (s == ERROR_FILE_NOT_FOUND) {
 					break; /* no DeviceInterfaceGUID registered */
-				} else if (s != ERROR_SUCCESS) {
-					usbi_warn(ctx, "unexpected error from pRegQueryValueExA for '%s'", dev_id);
-					break;
-				}
-				// https://docs.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regqueryvalueexa#remarks
-				// - "string may not have been stored with the proper terminating null characters"
-				// - "Note that REG_MULTI_SZ strings could have two terminating null characters"
-			        if ((reg_type == REG_SZ && size >= sizeof(guid_string) - sizeof(char))
-				    || (reg_type == REG_MULTI_SZ && size >= sizeof(guid_string) - 2 * sizeof(char))) {
-					if (nb_guids == guid_size) {
-						new_guid_list = realloc((void *)guid_list, (guid_size + GUID_SIZE_STEP) * sizeof(void *));
-						if (new_guid_list == NULL) {
-							usbi_err(ctx, "failed to realloc guid list");
-							LOOP_BREAK(LIBUSB_ERROR_NO_MEM);
-						}
-						guid_list = new_guid_list;
-						guid_size += GUID_SIZE_STEP;
-					}
-					if_guid = malloc(sizeof(*if_guid));
-					if (if_guid == NULL) {
-						usbi_err(ctx, "failed to alloc if_guid");
-						LOOP_BREAK(LIBUSB_ERROR_NO_MEM);
-					}
-					if (!string_to_guid(guid_string, if_guid)) {
-						usbi_warn(ctx, "device '%s' has malformed DeviceInterfaceGUID string '%s', skipping", dev_id, guid_string);
-						free(if_guid);
-					} else {
-						// Check if we've already seen this GUID
-						for (j = EXT_PASS; j < nb_guids; j++) {
-							if (memcmp(guid_list[j], if_guid, sizeof(*if_guid)) == 0)
-								break;
-						}
-						if (j == nb_guids) {
-							usbi_dbg(ctx, "extra GUID: %s", guid_string);
-							guid_list[nb_guids++] = if_guid;
-						} else {
-							// Duplicate, ignore
-							free(if_guid);
-						}
-					}
-				} else {
-					usbi_warn(ctx, "unexpected type/size of DeviceInterfaceGUID for '%s'", dev_id);
-				}
+                } else if (s == ERROR_MORE_DATA) {
+                    usbi_warn(ctx, "Found multiple GUIDs for interface: '%s'", dev_id);
+                    // Multiple GUIDs, get them all
+                    int count = (size/MAX_GUID_STRING_LENGTH) + 1;
+                    DWORD byte_size = count * MAX_GUID_STRING_LENGTH * sizeof(char);
+                    LPBYTE  guids_buffer = calloc(count, MAX_GUID_STRING_LENGTH * sizeof(char));
+                    guids_buffer[byte_size-1] = 0x0;
+                    while(s == ERROR_MORE_DATA){
+                        s = pRegQueryValueExA(key, "DeviceInterfaceGUIDs", NULL, &reg_type,
+                            guids_buffer, &byte_size);
+                        if (s == ERROR_FILE_NOT_FOUND)
+                            s = pRegQueryValueExA(key, "DeviceInterfaceGUID", NULL, &reg_type,
+                                guids_buffer, &byte_size);
+                        if(s == ERROR_MORE_DATA){
+                            // split the guids up and add them individually
+                            count++;
+                            usbi_dbg(ctx, "Allocating buffer for %d interface GUIDS", count);
+                            byte_size = count * MAX_GUID_STRING_LENGTH * sizeof(char);
+                            guids_buffer = (LPBYTE) realloc(guids_buffer, byte_size);
+                            guids_buffer[byte_size-1] = 0x0;
+                        }
+                    }
+                    // Only grab the first one
+                    for(int index = 0; index < count; ++index){
+                        //memcpy_s(guid_string, MAX_GUID_STRING_LENGTH, guids_buffer,MAX_GUID_STRING_LENGTH);
+                        int index_offset = index * MAX_GUID_STRING_LENGTH;
+                        int guid_length = sizeof(guids_buffer + index_offset);
+                        if ((reg_type == REG_SZ && size >= guid_length - sizeof(char))
+                        || (reg_type == REG_MULTI_SZ && size >= guid_length - 2 * sizeof(char))) {
+                            int ret  = winusb_add_guid_to_guid_list(ctx, dev_id,(guids_buffer + index_offset), &nb_guids, &guid_size, &guid_list);
+                            if(ret == LIBUSB_ERROR_NO_MEM){
+                                LOOP_BREAK(LIBUSB_ERROR_NO_MEM);
+                            }
+                        } else {
+                            usbi_warn(ctx, "unexpected type/size of DeviceInterfaceGUID for '%s'", dev_id);
+                        }
+                    }
+                    free(guids_buffer);
+                    pRegCloseKey(key);
+                } else if (s != ERROR_SUCCESS) {
+                    usbi_warn(ctx, "unexpected error from pRegQueryValueExA for '%s'", dev_id);
+                }else {
+                    pRegCloseKey(key);
+                    if ((reg_type == REG_SZ && size >= sizeof(guid_string) - sizeof(char))
+                    || (reg_type == REG_MULTI_SZ && size >= sizeof(guid_string) - 2 * sizeof(char))) {
+                        int ret  = winusb_add_guid_to_guid_list(ctx, dev_id, (LPBYTE)guid_string, &nb_guids, &guid_size, &guid_list);
+                        if(ret == LIBUSB_ERROR_NO_MEM){
+                            LOOP_BREAK(LIBUSB_ERROR_NO_MEM);
+                        }
+                    }
+                    else {
+                        usbi_warn(ctx, "unexpected type/size of DeviceInterfaceGUID for '%s'", dev_id);
+                    }
+                }
 				break;
-			case HID_PASS:
+            case HID_PASS:
 				api = USB_API_HID;
 				break;
 			default:
@@ -1892,6 +1904,48 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
 	free(unref_list);
 
 	return r;
+}
+
+static long winusb_add_guid_to_guid_list(struct libusb_context *ctx, const char* dev_id, LPBYTE guid_string, unsigned int *nb_guids, unsigned int *guid_size,const GUID ***guid_list)
+{
+    LONG r;
+    unsigned int j;
+    const GUID **new_guid_list;
+    unsigned int guid_count = *nb_guids;
+    if (guid_count == (*guid_size)) {
+        new_guid_list = realloc((void *)*guid_list, ((*guid_size) + GUID_SIZE_STEP) * sizeof(void *));
+        if (new_guid_list == NULL) {
+            r = LIBUSB_ERROR_NO_MEM;
+            usbi_err(ctx, "failed to realloc guid list");
+            //LOOP_BREAK(LIBUSB_ERROR_NO_MEM);
+        }
+        *guid_list = new_guid_list;
+        (*guid_size) += GUID_SIZE_STEP;
+    }
+    struct _GUID* if_guid = malloc(sizeof(struct _GUID));
+    if (if_guid == NULL) {
+        r = LIBUSB_ERROR_NO_MEM;
+        usbi_err(ctx, "failed to alloc if_guid");
+        //LOOP_BREAK(LIBUSB_ERROR_NO_MEM);
+    }
+    if (!string_to_guid((const char*)guid_string, if_guid)) {
+        usbi_warn(ctx, "device '%s' has malformed DeviceInterfaceGUID string '%s', skipping", dev_id, guid_string);
+        free(if_guid);
+    } else {
+        // Check if we've already seen this GUID
+        for (j = EXT_PASS; j < guid_count; j++) {
+            if (memcmp(*guid_list[j], if_guid, sizeof(*if_guid)) == 0)
+                break;
+        }
+        if (j == guid_count) {
+            usbi_dbg(ctx, "extra GUID: %s", guid_string);
+            (*guid_list)[(*nb_guids)++] = if_guid;
+        } else {
+            // Duplicate, ignore
+            free(if_guid);
+        }
+    }
+    return r;
 }
 
 static int winusb_get_config_descriptor(struct libusb_device *dev, uint8_t config_index, void *buffer, size_t len)
