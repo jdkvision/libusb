@@ -1682,7 +1682,7 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
                     for(int index = 0; index < count && index_offset < size; ++index){
                         DWORD guid_length = strlen((const char*)(guids_buffer+index_offset));
                         int ret  = winusb_add_guid_to_guid_list(ctx, dev_id,(guids_buffer + index_offset), &nb_guids, &guid_size, &guid_list);
-                        if(ret == LIBUSB_ERROR_NO_MEM){
+                        if(ret == LIBUSB_ERROR_NO_MEM){ // Return value might also be ERROR_DUP_NAME, but we don't care about that
                             pRegCloseKey(key);
                             LOOP_BREAK(LIBUSB_ERROR_NO_MEM);
                         }
@@ -1691,12 +1691,12 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
                             if(guids_buffer[index_offset+seek_count])
                                 break;
                         }
-                        index_offset = seek_count; // 1 for REG_SZ and 2 for REG_MULTI_SZ
+                        index_offset += seek_count; // move to the start of the next GUID in the guids_buffer
                     }
                     free(guids_buffer);;
                 } else if (s != ERROR_SUCCESS) {
                     usbi_warn(ctx, "unexpected error from pRegQueryValueExA for '%s'", dev_id);
-                }else {
+                }else { // A single GUID found
                     if ((reg_type == REG_SZ && size >= sizeof(guid_string) - sizeof(char))
                     || (reg_type == REG_MULTI_SZ && size >= sizeof(guid_string) - 2 * sizeof(char))) {
                         int ret  = winusb_add_guid_to_guid_list(ctx, dev_id, (LPBYTE)guid_string, &nb_guids, &guid_size, &guid_list);
@@ -1909,11 +1909,16 @@ static int winusb_get_device_list(struct libusb_context *ctx, struct discovered_
 
 static long winusb_add_guid_to_guid_list(struct libusb_context *ctx, const char* dev_id, LPBYTE guid_string, unsigned int *nb_guids, unsigned int *guid_size,const GUID ***guid_list)
 {
+    /* First: Allocate memory to store and convert the string GUID into a struct _GUID
+       Second: Compare the structure with the exsisting (discovered) GUIDs in the list
+             : If list already contains GUID, free the memory for the struct _GUID and return DUP_NAME
+       Last: Check if guid_list is large enough
+           : If not resize it
+           : Append the allocated GUID structure to the list and update the nb_guids variable
+           : return succes */
     LONG r = ERROR_SUCCESS;
-    unsigned int j;
-    const GUID **new_guid_list;
     unsigned int guid_count = *nb_guids;
-    // check if the guid already exists
+
     struct _GUID* if_guid = malloc(sizeof(struct _GUID));
     if (if_guid == NULL) {
         r = LIBUSB_ERROR_NO_MEM;
@@ -1924,16 +1929,15 @@ static long winusb_add_guid_to_guid_list(struct libusb_context *ctx, const char*
             free(if_guid);
         } else {
             // Check if we've already seen this GUID (first)
-            usbi_dbg(ctx, "extra GUID: %s", guid_string);
-            for (j = EXT_PASS; j < guid_count; j++) {
+            for (unsigned int j = EXT_PASS; j < guid_count; j++) {
                 if (memcmp((*guid_list)[j], if_guid, sizeof(*if_guid)) == 0){
                     free(if_guid);
                     return ERROR_DUP_NAME; // Not really an error
                 }
             }
-
-            if (guid_count == (*guid_size)) {
-                new_guid_list = realloc((void *)*guid_list, ((*guid_size) + GUID_SIZE_STEP) * sizeof(void *));
+            usbi_dbg(ctx, "extra GUID: %s", guid_string);
+            if (guid_count == (*guid_size)) { // check if resize of guid list is needed
+                const GUID ** new_guid_list = realloc((void *)*guid_list, ((*guid_size) + GUID_SIZE_STEP) * sizeof(void *));
                 if (new_guid_list == NULL) {
                     usbi_err(ctx, "failed to realloc guid list");
                     free(if_guid);
