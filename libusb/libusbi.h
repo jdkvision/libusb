@@ -1187,6 +1187,24 @@ struct usbi_os_backend {
 	 */
 	int (*set_configuration)(struct libusb_device_handle *dev_handle, int config);
 
+	/** Set the pipe policy for a specific endpoint.
+	 *
+	 * This function sets the policy for a specific endpoint on a given interface
+	 * of a USB device. The policy determines how data is handled for the endpoint.
+	 *
+	 * \param dev_handle A handle for the USB device.
+	 * \param interface_number The number of the interface containing the endpoint.
+	 * \param endpoint_address The address of the endpoint whose policy is to be set.
+	 * \param policy_type The type of policy to be set for the endpoint.
+	 * \param value_length The length of the value parameter.
+	 * \param value A pointer to the value to be set for the policy.
+	 *
+	 * Return:
+	 * - 0 on success
+	 * - another LIBUSB_ERROR code on other failure.
+	 */
+	 int (*setpipepolicy)(struct libusb_device_handle* dev_handle, uint8_t interface_number, uint8_t endpoint_address, uint32_t policy_type, uint32_t value_length, void* value);
+
 	/* Claim an interface. When claimed, the application can then perform
 	 * I/O to an interface's endpoints.
 	 *

@@ -711,6 +711,7 @@ const struct windows_backend usbdk_backend = {
 	usbdk_get_config_descriptor_by_value,
 	usbdk_get_configuration,
 	usbdk_set_configuration,
+	NULL,  // setpipepolicy
 	usbdk_claim_interface,
 	usbdk_release_interface,
 	usbdk_set_interface_altsetting,

@@ -680,6 +680,12 @@ static int windows_set_configuration(struct libusb_device_handle *dev_handle, in
 	return priv->backend->set_configuration(dev_handle, (uint8_t)config);
 }
 
+static int windows_setpipepolicy(struct libusb_device_handle* dev_handle, uint8_t interface_number, uint8_t endpoint_address, uint32_t policy_type, uint32_t value_length, void* value)
+{
+	struct windows_context_priv* priv = usbi_get_context_priv(HANDLE_CTX(dev_handle));
+	return priv->backend->setpipepolicy(dev_handle, interface_number, endpoint_address, policy_type, value_length, value);
+}
+
 static int windows_claim_interface(struct libusb_device_handle *dev_handle, uint8_t interface_number)
 {
 	struct windows_context_priv *priv = usbi_get_context_priv(HANDLE_CTX(dev_handle));
@@ -898,6 +904,7 @@ const struct usbi_os_backend usbi_backend = {
 	windows_get_config_descriptor_by_value,
 	windows_get_configuration,
 	windows_set_configuration,
+	windows_setpipepolicy,
 	windows_claim_interface,
 	windows_release_interface,
 	windows_set_interface_altsetting,

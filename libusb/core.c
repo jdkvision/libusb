@@ -1743,6 +1743,37 @@ int API_EXPORTED libusb_set_configuration(libusb_device_handle *dev_handle,
 }
 
 /** \ingroup libusb_dev
+ * This function sets the policy for a specific endpoint on a given interface
+ * of a USB device. The policy determines how data is handled for the endpoint.
+ *
+ * \param dev_handle A handle for the USB device.
+ * \param interface_number The number of the interface containing the endpoint.
+ * \param endpoint_address The address of the endpoint whose policy is to be set.
+ * \param policy The policy to be set for the endpoint.
+ *
+ * \return 0 on success, or a LIBUSB_ERROR code on failure.
+ */
+int API_EXPORTED libusb_setpipepolicy(libusb_device_handle* dev_handle,
+	int interface_number, uint8_t endpoint_address, uint32_t policy_type, uint32_t value_length, void* value)
+{
+	int r = 0;
+
+	usbi_dbg(HANDLE_CTX(dev_handle), "interface %d", interface_number);
+	if (interface_number < 0 || interface_number >= USB_MAXINTERFACES)
+		return LIBUSB_ERROR_INVALID_PARAM;
+
+	if (!usbi_atomic_load(&dev_handle->dev->attached))
+		return LIBUSB_ERROR_NO_DEVICE;
+
+	usbi_mutex_lock(&dev_handle->lock);
+
+	r = usbi_backend.setpipepolicy(dev_handle, (uint8_t)interface_number, endpoint_address, policy_type, value_length, value);
+
+	usbi_mutex_unlock(&dev_handle->lock);
+	return r;
+}
+
+/** \ingroup libusb_dev
  * Claim an interface on a given device handle. You must claim the interface
  * you wish to use before you can perform I/O on any of its endpoints.
  *

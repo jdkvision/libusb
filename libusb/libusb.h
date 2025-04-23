@@ -1664,6 +1664,8 @@ libusb_device * LIBUSB_CALL libusb_get_device(libusb_device_handle *dev_handle);
 
 int LIBUSB_CALL libusb_set_configuration(libusb_device_handle *dev_handle,
 	int configuration);
+int LIBUSB_CALL libusb_setpipepolicy(libusb_device_handle* dev_handle,
+	int interface_number, uint8_t endpoint_address, uint32_t policy_type, uint32_t value_length, void* value);
 int LIBUSB_CALL libusb_claim_interface(libusb_device_handle *dev_handle,
 	int interface_number);
 int LIBUSB_CALL libusb_release_interface(libusb_device_handle *dev_handle,

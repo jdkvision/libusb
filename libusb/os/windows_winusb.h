@@ -77,6 +77,7 @@ struct windows_usb_api_backend {
 	int (*open)(int sub_api, struct libusb_device_handle *dev_handle);
 	void (*close)(int sub_api, struct libusb_device_handle *dev_handle);
 	int (*configure_endpoints)(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface);
+	int (*setpipepolicy)(int sub_api, struct libusb_device_handle* dev_handle, uint8_t iface, uint8_t endpoint_address, DWORD policy_type, DWORD value_length, void* value);
 	int (*claim_interface)(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface);
 	int (*set_interface_altsetting)(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface, uint8_t altsetting);
 	int (*release_interface)(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface);

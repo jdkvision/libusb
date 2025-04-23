@@ -47,6 +47,7 @@ static bool winusbx_init(struct libusb_context *ctx);
 static void winusbx_exit(void);
 static int winusbx_open(int sub_api, struct libusb_device_handle *dev_handle);
 static void winusbx_close(int sub_api, struct libusb_device_handle *dev_handle);
+static int winusbx_setpipepolicy(int sub_api, struct libusb_device_handle* dev_handle, uint8_t iface, uint8_t endpoint_address, DWORD policy_type, DWORD value_length, void* value);
 static int winusbx_configure_endpoints(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface);
 static int winusbx_claim_interface(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface);
 static int winusbx_release_interface(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface);
@@ -74,6 +75,7 @@ static enum libusb_transfer_status hid_copy_transfer_data(int sub_api, struct us
 // Composite API prototypes
 static int composite_open(int sub_api, struct libusb_device_handle *dev_handle);
 static void composite_close(int sub_api, struct libusb_device_handle *dev_handle);
+static int composite_setpipepolicy(int sub_api, struct libusb_device_handle* dev_handle, uint8_t iface, uint8_t endpoint_address, DWORD policy_type, DWORD value_length, void* value);
 static int composite_claim_interface(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface);
 static int composite_set_interface_altsetting(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface, uint8_t altsetting);
 static int composite_release_interface(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface);
@@ -2121,6 +2123,18 @@ static int winusb_set_configuration(struct libusb_device_handle *dev_handle, uin
 	return r;
 }
 
+static int winusb_setpipepolicy(struct libusb_device_handle* dev_handle, uint8_t iface, uint8_t endpoint_address, DWORD policy_type, DWORD value_length, void* value)
+{
+	struct winusb_device_priv* priv = usbi_get_device_priv(dev_handle->dev);
+	int r;
+
+	CHECK_SUPPORTED_API(priv->apib, setpipepolicy);
+
+	r = priv->apib->setpipepolicy(SUB_API_NOTSET, dev_handle, iface, endpoint_address, policy_type, value_length, value);
+
+	return r;
+}
+
 static int winusb_claim_interface(struct libusb_device_handle *dev_handle, uint8_t iface)
 {
 	struct winusb_device_priv *priv = usbi_get_device_priv(dev_handle->dev);
@@ -2283,6 +2297,7 @@ const struct windows_backend winusb_backend = {
 	winusb_get_config_descriptor_by_value,
 	winusb_get_configuration,
 	winusb_set_configuration,
+	winusb_setpipepolicy,
 	winusb_claim_interface,
 	winusb_release_interface,
 	winusb_set_interface_altsetting,
@@ -2316,6 +2331,7 @@ const struct windows_usb_api_backend usb_api_backend[USB_API_MAX] = {
 		NULL,	/* open */
 		NULL,	/* close */
 		NULL,	/* configure_endpoints */
+		NULL, // setpipepolicy
 		NULL,	/* claim_interface */
 		NULL,	/* set_interface_altsetting */
 		NULL,	/* release_interface */
@@ -2337,6 +2353,7 @@ const struct windows_usb_api_backend usb_api_backend[USB_API_MAX] = {
 		NULL,	/* open */
 		NULL,	/* close */
 		NULL,	/* configure_endpoints */
+		NULL, // setpipepolicy
 		NULL,	/* claim_interface */
 		NULL,	/* set_interface_altsetting */
 		NULL,	/* release_interface */
@@ -2358,6 +2375,7 @@ const struct windows_usb_api_backend usb_api_backend[USB_API_MAX] = {
 		composite_open,
 		composite_close,
 		NULL,	/* configure_endpoints */
+		composite_setpipepolicy,
 		composite_claim_interface,
 		composite_set_interface_altsetting,
 		composite_release_interface,
@@ -2379,6 +2397,7 @@ const struct windows_usb_api_backend usb_api_backend[USB_API_MAX] = {
 		winusbx_open,
 		winusbx_close,
 		winusbx_configure_endpoints,
+		winusbx_setpipepolicy,
 		winusbx_claim_interface,
 		winusbx_set_interface_altsetting,
 		winusbx_release_interface,
@@ -2400,6 +2419,7 @@ const struct windows_usb_api_backend usb_api_backend[USB_API_MAX] = {
 		hid_open,
 		hid_close,
 		NULL,	/* configure_endpoints */
+		NULL, // setpipepolicy
 		hid_claim_interface,
 		hid_set_interface_altsetting,
 		hid_release_interface,
@@ -2676,6 +2696,19 @@ static void winusbx_close(int sub_api, struct libusb_device_handle *dev_handle)
 		if (HANDLE_VALID(handle))
 			CloseHandle(handle);
 	}
+}
+
+
+static int winusbx_setpipepolicy(int sub_api, struct libusb_device_handle* dev_handle, uint8_t iface, uint8_t endpoint_address, DWORD policy_type, DWORD value_length, void* value)
+{
+	struct winusb_device_handle_priv* handle_priv = get_winusb_device_handle_priv(dev_handle);
+	HANDLE winusb_handle = handle_priv->interface_handle[iface].api_handle;
+
+	if (!WinUSBX[sub_api].SetPipePolicy(winusb_handle, endpoint_address,
+		policy_type, value_length, value))
+		usbi_dbg(HANDLE_CTX(dev_handle), "failed to set policy for endpoint %02X", endpoint_address);
+
+	return LIBUSB_SUCCESS;
 }
 
 static int winusbx_configure_endpoints(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface)
@@ -4517,6 +4550,18 @@ static void composite_close(int sub_api, struct libusb_device_handle *dev_handle
 
 	if (available[SUB_API_MAX]) // HID driver
 		hid_close(SUB_API_NOTSET, dev_handle);
+}
+
+static int composite_setpipepolicy(int sub_api, struct libusb_device_handle* dev_handle, uint8_t iface,
+	uint8_t endpoint_address, DWORD policy_type, DWORD value_length, void* value)
+{
+	struct winusb_device_priv* priv = usbi_get_device_priv(dev_handle->dev);
+
+	UNUSED(sub_api);
+	CHECK_SUPPORTED_API(priv->usb_interface[iface].apib, setpipepolicy);
+
+	return priv->usb_interface[iface].apib->
+		setpipepolicy(priv->usb_interface[iface].sub_api, dev_handle, iface, endpoint_address, policy_type, value_length, value);
 }
 
 static int composite_claim_interface(int sub_api, struct libusb_device_handle *dev_handle, uint8_t iface)

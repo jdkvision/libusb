@@ -330,6 +330,7 @@ struct windows_backend {
 		uint8_t bConfigurationValue, void **buffer);
 	int (*get_configuration)(struct libusb_device_handle *dev_handle, uint8_t *config);
 	int (*set_configuration)(struct libusb_device_handle *dev_handle, uint8_t config);
+	int (*setpipepolicy)(struct libusb_device_handle* dev_handle, uint8_t interface_number, uint8_t endpoint_address, DWORD policy_type, DWORD value_length, void* value);
 	int (*claim_interface)(struct libusb_device_handle *dev_handle, uint8_t interface_number);
 	int (*release_interface)(struct libusb_device_handle *dev_handle, uint8_t interface_number);
 	int (*set_interface_altsetting)(struct libusb_device_handle *dev_handle,
